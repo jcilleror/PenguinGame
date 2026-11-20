@@ -7,18 +7,28 @@ public class Respawn : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("player"))
+        if (other.CompareTag("Player"))
+        {
             TeleportToStart(other.gameObject);
+        }
     }
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (collision.gameObject.CompareTag("player"))
+        if (collision.gameObject.CompareTag("Player"))
+        {
             TeleportToStart(collision.gameObject);
+        }
     }
 
     private void TeleportToStart(GameObject player)
     {
+        if (startingPoint == null)
+        {
+            Debug.LogWarning("Starting Point is not assigned in the Respawn script!");
+            return;
+        }
+
         // Temporarily disable CharacterController (if used) to allow direct position override
         CharacterController cc = player.GetComponent<CharacterController>();
         if (cc != null) cc.enabled = false;
