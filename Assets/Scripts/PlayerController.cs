@@ -7,178 +7,137 @@ using UnityEngine.InputSystem;
 /// </summary>
 public class PlayerController : MonoBehaviour
 {
-    [Header("References")]
-    [Tooltip("CharacterController component attached to the player GameObject.")]
-    public CharacterController controller;
+    // Variables for input configuration and player movement.
+    public InputActionAsset InputActions;
+    public CharacterController playerCharacterController;
 
-    [Tooltip("Transform of the camera used to calculate movement direction relative to view.")]
-    public Transform cameraTransform;
+    // Variables for the player movement and jump input actions.
+    private InputAction playerMoveAction;
+    private InputAction playerJumpAction;
 
-    private Animator animator;
+    [SerializeField]
+    private Transform playerCamera;
 
-    [Header("Movement Settings")]
-    [Tooltip("Enables or disables player movement input and motion.")]
-    public bool canMove = true;
+    private Vector2 playerMoveAmount;
+    [SerializeField]
+    private float jumpHeight = 5.0f;
+    
+    [SerializeField]
+    private float playerWalkSpeed = 5.0f;
+    [SerializeField]
+    private float playerRotateDampening = 0.1f;
 
-    [Tooltip("Horizontal movement speed in meters per second.")]
-    public float moveSpeed = 5f;
+    // Variable for storing the current rotation smoothing velocity.
+    private float turnSmoothingVelocity;
 
-    [Tooltip("Turn speed used to smoothly rotate the character toward the movement direction.")]
-    public float rotationSpeed = 12f;
+    private float verticalVelocity = 0f;
+    private float gravity = -9.81f;
 
-    [Header("Gravity Settings")]
-    [Tooltip("Downward acceleration applied when airborne (m/s^2).")]
-    public float gravity = 9.81f;
 
-    [Tooltip("Small downward velocity applied while grounded to keep CharacterController in contact with the ground.")]
-    public float groundedGravity = -2f;
+    /// <summary>
+    /// Enables the player's input action map when this component becomes active.
+    /// Keeping this tied to the component lifecycle prevents player input from
+    /// remaining active while the player object is disabled.
+    /// </summary>
+    private void OnEnable()
+    {
+        InputActions.FindActionMap("Player").Enable();
+    }
 
-    private float verticalVelocity;
 
-    [Header("Animation Settings (Optional)")]
-    [Tooltip("Smooth damp time for blending the speed parameter.")]
-    public float animationSmoothTime = 0.1f;
+    /// <summary>
+    /// Disables the player's input action map when this component is deactivated.
+    /// This mirrors <see cref="OnEnable"/> and avoids reading input from an
+    /// inactive player object.
+    /// </summary>
+    private void OnDisable()
+    {
+        InputActions.FindActionMap("Player").Disable();
+    }
 
-    [Tooltip("Name of the Float parameter in the Animator controller (if present).")]
-    public string speedParamName = "Speed";
 
-    private float currentAnimSpeed;
-    private float animSpeedRef;
-
-    // Normalized horizontal input vector (x = horizontal/strafe, z = forward/back)
-    private Vector3 moveInput;
-
+    /// <summary>
+    /// Retrieves the input actions used by the controller before gameplay starts.
+    /// Caching these actions avoids repeatedly looking them up during every frame.
+    /// </summary>
     private void Awake()
     {
-        // Fallback to the CharacterController on this GameObject if not assigned in the Inspector
-        if (controller == null)
-        {
-            controller = GetComponent<CharacterController>();
-        }
-
-        // Look for an Animator in child objects (common for character rigs/models)
-        animator = GetComponentInChildren<Animator>();
-
-        // Fallback to Camera.main if no camera transform is explicitly assigned
-        if (cameraTransform == null && Camera.main != null)
-        {
-            cameraTransform = Camera.main.transform;
-        }
+        playerMoveAction = InputSystem.actions.FindAction("Move");
+        playerJumpAction = InputSystem.actions.FindAction("Jump");
     }
 
+
+    /// <summary>
+    /// Reads the current movement input and updates movement, rotation, and jumping.
+    /// Unity calls this method once per frame, making it suitable for frame-based
+    /// input processing and character movement.
+    /// </summary>
     private void Update()
     {
-        // Stop processing if movement is disabled or CharacterController is missing
-        if (!canMove || controller == null) return;
-
-        ReadMovementInput();
-        MovePlayer();
-        UpdateAnimator();
+        playerMoveAmount = playerMoveAction.ReadValue<Vector2>();
+        PlayerMoveAndRotate();
+        Jump();
     }
 
+    
     /// <summary>
-    /// Reads movement input from keyboard (WASD / Arrow keys) or gamepad left stick.
+    /// Moves the player relative to the camera's horizontal orientation and rotates
+    /// the character smoothly towards the direction of movement. It also applies
+    /// the current vertical velocity so gravity and jumping use the same movement
+    /// operation as horizontal motion.
     /// </summary>
-    private void ReadMovementInput()
+    private void PlayerMoveAndRotate()
     {
-        Vector3 input = Vector3.zero;
+        // Convert 2D input into a horizontal 3D direction and normalize it so
+        // diagonal input does not make the player move faster.
+        Vector3 playerDirection = new Vector3(playerMoveAmount.x, 0f, playerMoveAmount.y).normalized;
+        Vector3 verticalMove = new Vector3(0f, verticalVelocity, 0f) * Time.deltaTime;
 
-        // Keyboard input
-        if (Keyboard.current != null)
+        if(playerDirection.magnitude >= 0.1f)
         {
-            float right = (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) ? 1f : 0f;
-            float left = (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) ? 1f : 0f;
-            float forward = (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) ? 1f : 0f;
-            float backward = (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) ? 1f : 0f;
+            // Add the camera's yaw so "forward" input follows the camera view
+            // instead of always using the world's forward direction.
+            float targetAngle = Mathf.Atan2(playerDirection.x, playerDirection.z) * Mathf.Rad2Deg + playerCamera.eulerAngles.y;
+            float smoothTargetAngle = Mathf.SmoothDampAngle(transform.eulerAngles.y, targetAngle, ref turnSmoothingVelocity, playerRotateDampening);
 
-            input.x = right - left;
-            input.z = forward - backward;
-        }
+            transform.rotation = Quaternion.Euler(0f, smoothTargetAngle, 0f);
 
-        // Gamepad left stick input (overrides if stick is actively deflected)
-        if (Gamepad.current != null)
-        {
-            Vector2 stick = Gamepad.current.leftStick.ReadValue();
-            if (stick.sqrMagnitude > 0.001f)
-            {
-                input.x = stick.x;
-                input.z = stick.y;
-            }
-        }
-
-        // Clamp magnitude to 1 so diagonal movement is not faster than straight movement
-        moveInput = Vector3.ClampMagnitude(input, 1f);
-    }
-
-    /// <summary>
-    /// Converts input into camera-relative world movement, rotates the character,
-    /// applies gravity, and moves the CharacterController.
-    /// </summary>
-    private void MovePlayer()
-    {
-        Vector3 horizontalMove = Vector3.zero;
-
-        if (moveInput.sqrMagnitude > 0.001f)
-        {
-            Vector3 camForward = Vector3.forward;
-            Vector3 camRight = Vector3.right;
-
-            // Flatten camera forward and right vectors onto the XZ plane
-            if (cameraTransform != null)
-            {
-                camForward = cameraTransform.forward;
-                camRight = cameraTransform.right;
-                camForward.y = 0f;
-                camRight.y = 0f;
-                camForward.Normalize();
-                camRight.Normalize();
-            }
-
-            // Compute desired world-space movement direction
-            Vector3 moveDirection = (camForward * moveInput.z + camRight * moveInput.x).normalized;
-            horizontalMove = moveDirection * moveSpeed;
-
-            // Smoothly rotate character to face the movement direction
-            Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
-        }
-
-        // Apply grounded snap or airborne gravity
-        if (controller.isGrounded && verticalVelocity < 0f)
-        {
-            verticalVelocity = groundedGravity;
+            Vector3 moveDirection = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
+            playerCharacterController.Move(moveDirection.normalized * playerWalkSpeed * Time.deltaTime + verticalMove);
         }
         else
         {
-            verticalVelocity -= gravity * Time.deltaTime;
+            // Continue applying vertical movement while the player is not moving
+            // horizontally, allowing the character to fall or land correctly.
+            playerCharacterController.Move(verticalMove);
         }
-
-        // Combine horizontal velocity and vertical gravity velocity
-        Vector3 finalVelocity = horizontalMove;
-        finalVelocity.y = verticalVelocity;
-
-        // CharacterController.Move expects a displacement delta per frame
-        controller.Move(finalVelocity * Time.deltaTime);
     }
+
 
     /// <summary>
-    /// Smoothly updates the Animator speed parameter if an Animator and matching parameter exist.
+    /// Updates the player's vertical velocity. When grounded, the velocity is
+    /// reset to a small downward value to keep the CharacterController grounded;
+    /// otherwise gravity is accumulated over time. A jump replaces that value
+    /// with the configured jump velocity.
     /// </summary>
-    private void UpdateAnimator()
+    private void Jump()
     {
-        if (animator == null) return;
-
-        float targetSpeed = moveInput.magnitude;
-        currentAnimSpeed = Mathf.SmoothDamp(currentAnimSpeed, targetSpeed, ref animSpeedRef, animationSmoothTime);
-
-        // Only set the parameter if it exists on the Animator to avoid console warnings
-        foreach (AnimatorControllerParameter param in animator.parameters)
+        if(playerCharacterController.isGrounded)
         {
-            if (param.name == speedParamName && param.type == AnimatorControllerParameterType.Float)
+            // A slight downward force helps maintain contact with uneven ground.
+            verticalVelocity = -1f;
+
+            if(playerJumpAction.WasPressedThisFrame())
             {
-                animator.SetFloat(speedParamName, currentAnimSpeed);
-                break;
+                verticalVelocity = jumpHeight;
             }
         }
+        else
+        {
+            // Multiply gravity by deltaTime so falling behaves consistently
+            // regardless of the frame rate.
+            verticalVelocity += gravity * Time.deltaTime;
+        }
     }
+
 }
