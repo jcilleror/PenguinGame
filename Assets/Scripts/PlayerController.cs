@@ -1,15 +1,21 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using Unity.Netcode;
+using Unity.Cinemachine;
 
 /// <summary>
 /// Handles third-person movement, rotation, gravity, and optional animation parameters
 /// for the player character using a CharacterController and the Unity Input System.
 /// </summary>
-public class PlayerController : MonoBehaviour
+public class PlayerController : NetworkBehaviour
 {
     // Variables for input configuration and player movement.
     public InputActionAsset InputActions;
     public CharacterController playerCharacterController;
+
+    // Cloned input asset and action map for the local player instance.
+    private InputActionAsset runtimeInputActions;
+    private InputActionMap runtimePlayerMap;
 
     // Variables for the player movement and jump input actions.
     private InputAction playerMoveAction;
@@ -35,35 +41,31 @@ public class PlayerController : MonoBehaviour
 
 
     /// <summary>
-    /// Enables the player's input action map when this component becomes active.
-    /// Keeping this tied to the component lifecycle prevents player input from
-    /// remaining active while the player object is disabled.
-    /// </summary>
-    private void OnEnable()
-    {
-        InputActions.FindActionMap("Player").Enable();
-    }
-
-
-    /// <summary>
-    /// Disables the player's input action map when this component is deactivated.
-    /// This mirrors <see cref="OnEnable"/> and avoids reading input from an
-    /// inactive player object.
-    /// </summary>
-    private void OnDisable()
-    {
-        InputActions.FindActionMap("Player").Disable();
-    }
-
-
-    /// <summary>
     /// Retrieves the input actions used by the controller before gameplay starts.
     /// Caching these actions avoids repeatedly looking them up during every frame.
     /// </summary>
     private void Awake()
     {
-        playerMoveAction = InputSystem.actions.FindAction("Move");
-        playerJumpAction = InputSystem.actions.FindAction("Jump");
+        // Resolve actions from the assigned InputActions asset when available.
+        if (InputActions != null)
+        {
+            var playerMap = InputActions.FindActionMap("Player", false);
+            if (playerMap != null)
+            {
+                playerMoveAction = playerMap.FindAction("Move", false);
+                playerJumpAction = playerMap.FindAction("Jump", false);
+            }
+        }
+
+        if (playerMoveAction == null && InputSystem.actions != null)
+        {
+            playerMoveAction = InputSystem.actions.FindAction("Move");
+        }
+
+        if (playerJumpAction == null && InputSystem.actions != null)
+        {
+            playerJumpAction = InputSystem.actions.FindAction("Jump");
+        }
     }
 
 
@@ -74,12 +76,90 @@ public class PlayerController : MonoBehaviour
     /// </summary>
     private void Update()
     {
-        playerMoveAmount = playerMoveAction.ReadValue<Vector2>();
-        PlayerMoveAndRotate();
-        Jump();
+        if (IsOwner) {
+            if (playerMoveAction != null)
+            {
+                playerMoveAmount = playerMoveAction.ReadValue<Vector2>();
+            }
+            PlayerMoveAndRotate();
+            Jump();
+        }
     }
 
     
+    /// <summary>
+    /// Disables the camera, audio listener and the Cinemachine camera for non-owner clients to prevent them from seeing through the player's perspective.
+    /// This is called when the player is spawned on the network.
+    /// </summary>
+    public override void OnNetworkSpawn()
+    {
+        bool isLocalPlayer = IsOwner;
+
+        // Create and enable a dedicated input asset copy for the owning player.
+        if (isLocalPlayer && InputActions != null)
+        {
+            runtimeInputActions = Instantiate(InputActions);
+            runtimePlayerMap = runtimeInputActions.FindActionMap("Player", false);
+
+            if (runtimePlayerMap != null)
+            {
+                playerMoveAction = runtimePlayerMap.FindAction("Move", false);
+                playerJumpAction = runtimePlayerMap.FindAction("Jump", false);
+                runtimePlayerMap.Enable();
+            }
+        }
+        else if (runtimePlayerMap != null)
+        {
+            runtimePlayerMap.Disable();
+        }
+
+        // Enable or disable the camera and audio listener based on whether this is the local player.
+        Camera cam = playerCamera != null
+            ? playerCamera.GetComponent<Camera>()
+            : GetComponentInChildren<Camera>(true);
+
+        if (cam != null)
+        {
+            cam.gameObject.SetActive(isLocalPlayer);
+
+            AudioListener listener = cam.GetComponent<AudioListener>();
+            if (listener != null)
+            {
+                listener.enabled = isLocalPlayer;
+            }
+        }
+
+        // Enable or disable the Cinemachine camera based on whether this is the local player.
+        var cinemachineCam = GetComponentInChildren<CinemachineCamera>(true);
+        if (cinemachineCam != null)
+        {
+            cinemachineCam.gameObject.SetActive(isLocalPlayer);
+        }
+    }
+
+
+    /// <summary>
+    /// Disables and cleans up the player's runtime input asset when the networked object despawns.
+    /// </summary>
+    public override void OnNetworkDespawn()
+    {
+        // Disable the runtime action map and destroy the cloned input asset.
+        if (runtimePlayerMap != null)
+        {
+            runtimePlayerMap.Disable();
+            runtimePlayerMap = null;
+        }
+
+        if (runtimeInputActions != null)
+        {
+            Destroy(runtimeInputActions);
+            runtimeInputActions = null;
+        }
+
+        base.OnNetworkDespawn();
+    }
+
+
     /// <summary>
     /// Moves the player relative to the camera's horizontal orientation and rotates
     /// the character smoothly towards the direction of movement. It also applies
@@ -127,7 +207,7 @@ public class PlayerController : MonoBehaviour
             // A slight downward force helps maintain contact with uneven ground.
             verticalVelocity = -1f;
 
-            if(playerJumpAction.WasPressedThisFrame())
+            if(playerJumpAction != null && playerJumpAction.WasPressedThisFrame())
             {
                 verticalVelocity = jumpHeight;
             }
