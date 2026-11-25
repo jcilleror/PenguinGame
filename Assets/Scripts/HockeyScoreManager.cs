@@ -1,63 +1,155 @@
-using System.Collections;
-using TMPro;
+using Unity.Netcode;
 using UnityEngine;
+using TMPro;
 
-public class HockeyScoreManager : MonoBehaviour
+public class HockeyScoreManager : NetworkBehaviour
 {
-    [Header("Stadium Scoreboard (World Space UI)")]
-    public TMP_Text scoreText;
+    public static HockeyScoreManager Instance { get; private set; }
+
+    [Header("Scoreboard UI (World Space)")]
+    [SerializeField]
+    private TextMeshProUGUI scoreText;
 
     [Header("Puck Reset Settings")]
-    public Rigidbody puckRigidbody;
-    public Transform centerSpawnPoint;
-    public float resetDelay = 1.5f;
+    [SerializeField]
+    private Transform puckTransform;
+    [SerializeField]
+    private Transform centerFaceoffPoint;
+    [SerializeField]
+    private float resetDelay = 2.0f;
 
-    private int blueScore = 0;
-    private int redScore = 0;
-    private bool isResetting = false;
+    // Networked scores synchronized across all players
+    private NetworkVariable<int> blueScore = new NetworkVariable<int>(0);
+    private NetworkVariable<int> redScore = new NetworkVariable<int>(0);
+
+    // Cached references to all spectators in the stadium
+    private StadiumSpectator[] crowdSpectators;
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+    }
 
     private void Start()
     {
         UpdateScoreboard();
+        CacheSpectators();
     }
 
-    public void RegisterGoal(bool scoredByBlue)
+    public override void OnNetworkSpawn()
     {
-        if (isResetting) return;
+        base.OnNetworkSpawn();
 
-        if (scoredByBlue)
-            blueScore++;
-        else
-            redScore++;
+        blueScore.OnValueChanged += OnScoreChanged;
+        redScore.OnValueChanged += OnScoreChanged;
 
         UpdateScoreboard();
-        StartCoroutine(ResetPuckRoutine());
+        CacheSpectators();
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        blueScore.OnValueChanged -= OnScoreChanged;
+        redScore.OnValueChanged -= OnScoreChanged;
+
+        base.OnNetworkDespawn();
+    }
+
+    private void CacheSpectators()
+    {
+        if (crowdSpectators == null || crowdSpectators.Length == 0)
+        {
+            crowdSpectators = FindObjectsByType<StadiumSpectator>(FindObjectsSortMode.None);
+        }
+    }
+
+    private void OnScoreChanged(int previousValue, int newValue)
+    {
+        UpdateScoreboard();
+        CelebrateAllSpectators();
+    }
+
+    /// <summary>
+    /// Called by GoalZone when the puck enters a goal.
+    /// </summary>
+    public void RegisterGoal(bool scoredByBlue)
+    {
+        if (!IsServer) return;
+
+        if (scoredByBlue)
+        {
+            blueScore.Value++;
+        }
+        else
+        {
+            redScore.Value++;
+        }
+
+        // Schedule puck reset to the center of the rink
+        if (puckTransform != null && centerFaceoffPoint != null)
+        {
+            Invoke(nameof(ResetPuckPosition), resetDelay);
+        }
     }
 
     private void UpdateScoreboard()
     {
         if (scoreText != null)
         {
-            // Keep 7 spaces between scores to match the stadium scoreboard layout
-            scoreText.text = $"{blueScore}       {redScore}";
+            // Custom 7-space stadium format
+            scoreText.text = $"{blueScore.Value}       {redScore.Value}";
         }
     }
 
-    private IEnumerator ResetPuckRoutine()
+    private void CelebrateAllSpectators()
     {
-        isResetting = true;
-
-        // Brief pause so players can see the puck enter the goal before resetting
-        yield return new WaitForSeconds(resetDelay);
-
-        if (puckRigidbody != null && centerSpawnPoint != null)
+        if (crowdSpectators == null || crowdSpectators.Length == 0)
         {
-            puckRigidbody.linearVelocity = Vector3.zero;
-            puckRigidbody.angularVelocity = Vector3.zero;
-            puckRigidbody.transform.position = centerSpawnPoint.position;
-            puckRigidbody.transform.rotation = Quaternion.identity;
+            CacheSpectators();
         }
 
-        isResetting = false;
+        if (crowdSpectators != null)
+        {
+            foreach (StadiumSpectator spectator in crowdSpectators)
+            {
+                if (spectator != null)
+                {
+                    spectator.TriggerGoalCelebration();
+                }
+            }
+        }
+    }
+
+    private void ResetPuckPosition()
+    {
+        if (!IsServer || puckTransform == null || centerFaceoffPoint == null) return;
+
+        // 1. Parar en seco toda la inercia del disco
+        Rigidbody puckRb = puckTransform.GetComponent<Rigidbody>();
+        if (puckRb != null)
+        {
+            puckRb.linearVelocity = Vector3.zero;
+            puckRb.angularVelocity = Vector3.zero;
+        }
+
+        // Elevamos ligeramente en Y (0.15f) para evitar que se atasque en el suelo al aparecer
+        Vector3 spawnPos = centerFaceoffPoint.position + Vector3.up * 0.15f;
+        Quaternion spawnRot = centerFaceoffPoint.rotation;
+
+        // 2. Si tiene NetworkTransform, usar Teleport() para evitar la interpolación suave y sincronizar al instante
+        Unity.Netcode.Components.NetworkTransform netTransform = puckTransform.GetComponent<Unity.Netcode.Components.NetworkTransform>();
+        if (netTransform != null)
+        {
+            netTransform.Teleport(spawnPos, spawnRot, puckTransform.localScale);
+        }
+        else
+        {
+            puckTransform.SetPositionAndRotation(spawnPos, spawnRot);
+        }
     }
 }
