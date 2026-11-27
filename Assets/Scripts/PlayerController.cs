@@ -40,10 +40,8 @@ public class PlayerController : NetworkBehaviour
     private float gravity = -9.81f;
 
 
-    /// <summary>
     /// Retrieves the input actions used by the controller before gameplay starts.
     /// Caching these actions avoids repeatedly looking them up during every frame.
-    /// </summary>
     private void Awake()
     {
         // Resolve actions from the assigned InputActions asset when available.
@@ -69,11 +67,9 @@ public class PlayerController : NetworkBehaviour
     }
 
 
-    /// <summary>
     /// Reads the current movement input and updates movement, rotation, and jumping.
     /// Unity calls this method once per frame, making it suitable for frame-based
     /// input processing and character movement.
-    /// </summary>
     private void Update()
     {
         if (IsOwner) {
@@ -86,11 +82,9 @@ public class PlayerController : NetworkBehaviour
         }
     }
 
-    
-    /// <summary>
+
     /// Disables the camera, audio listener and the Cinemachine camera for non-owner clients to prevent them from seeing through the player's perspective.
     /// This is called when the player is spawned on the network.
-    /// </summary>
     public override void OnNetworkSpawn()
     {
         bool isLocalPlayer = IsOwner;
@@ -138,9 +132,7 @@ public class PlayerController : NetworkBehaviour
     }
 
 
-    /// <summary>
     /// Disables and cleans up the player's runtime input asset when the networked object despawns.
-    /// </summary>
     public override void OnNetworkDespawn()
     {
         // Disable the runtime action map and destroy the cloned input asset.
@@ -160,12 +152,10 @@ public class PlayerController : NetworkBehaviour
     }
 
 
-    /// <summary>
     /// Moves the player relative to the camera's horizontal orientation and rotates
     /// the character smoothly towards the direction of movement. It also applies
     /// the current vertical velocity so gravity and jumping use the same movement
     /// operation as horizontal motion.
-    /// </summary>
     private void PlayerMoveAndRotate()
     {
         // Convert 2D input into a horizontal 3D direction and normalize it so
@@ -194,12 +184,10 @@ public class PlayerController : NetworkBehaviour
     }
 
 
-    /// <summary>
     /// Updates the player's vertical velocity. When grounded, the velocity is
     /// reset to a small downward value to keep the CharacterController grounded;
     /// otherwise gravity is accumulated over time. A jump replaces that value
     /// with the configured jump velocity.
-    /// </summary>
     private void Jump()
     {
         if(playerCharacterController.isGrounded)

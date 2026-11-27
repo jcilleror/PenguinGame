@@ -16,11 +16,17 @@ public class HockeyScoreManager : NetworkBehaviour
     [SerializeField]
     private Transform centerFaceoffPoint;
     [SerializeField]
-    private float resetDelay = 2.0f;
+    private float resetDelay = 1.5f;
+
+    [Header("Team Spawn Points (Set Y >= 1.2)")]
+    [SerializeField]
+    private Transform[] teamASpawns;
+    [SerializeField]
+    private Transform[] teamBSpawns;
 
     // Networked scores synchronized across all players
-    private NetworkVariable<int> blueScore = new NetworkVariable<int>(0);
-    private NetworkVariable<int> redScore = new NetworkVariable<int>(0);
+    private NetworkVariable<int> teamAScore = new NetworkVariable<int>(0);
+    private NetworkVariable<int> teamBScore = new NetworkVariable<int>(0);
 
     // Cached references to all spectators in the stadium
     private StadiumSpectator[] crowdSpectators;
@@ -45,8 +51,8 @@ public class HockeyScoreManager : NetworkBehaviour
     {
         base.OnNetworkSpawn();
 
-        blueScore.OnValueChanged += OnScoreChanged;
-        redScore.OnValueChanged += OnScoreChanged;
+        teamAScore.OnValueChanged += OnScoreChanged;
+        teamBScore.OnValueChanged += OnScoreChanged;
 
         UpdateScoreboard();
         CacheSpectators();
@@ -54,10 +60,23 @@ public class HockeyScoreManager : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
-        blueScore.OnValueChanged -= OnScoreChanged;
-        redScore.OnValueChanged -= OnScoreChanged;
+        teamAScore.OnValueChanged -= OnScoreChanged;
+        teamBScore.OnValueChanged -= OnScoreChanged;
 
         base.OnNetworkDespawn();
+    }
+
+    /// Assigns Team A (even ClientId) or Team B (odd ClientId) and picks an available spawn slot.
+    /// Works identically for 1v1 or 2v2 matches.
+    public Transform GetSpawnPointForClient(ulong clientId)
+    {
+        bool isTeamA = (clientId % 2 == 0);
+        Transform[] selectedTeamSpawns = isTeamA ? teamASpawns : teamBSpawns;
+
+        if (selectedTeamSpawns == null || selectedTeamSpawns.Length == 0) return null;
+
+        int slotIndex = (int)(clientId / 2) % selectedTeamSpawns.Length;
+        return selectedTeamSpawns[slotIndex];
     }
 
     private void CacheSpectators()
@@ -77,32 +96,29 @@ public class HockeyScoreManager : NetworkBehaviour
     /// <summary>
     /// Called by GoalZone when the puck enters a goal.
     /// </summary>
-    public void RegisterGoal(bool scoredByBlue)
+    public void RegisterGoal(bool scoredByTeamA)
     {
         if (!IsServer) return;
 
-        if (scoredByBlue)
+        if (scoredByTeamA)
         {
-            blueScore.Value++;
+            teamAScore.Value++;
         }
         else
         {
-            redScore.Value++;
+            teamBScore.Value++;
         }
 
-        // Schedule puck reset to the center of the rink
-        if (puckTransform != null && centerFaceoffPoint != null)
-        {
-            Invoke(nameof(ResetPuckPosition), resetDelay);
-        }
+        // Schedule both puck and players reset for the next faceoff
+        Invoke(nameof(ResetRoundPositions), resetDelay);
     }
 
     private void UpdateScoreboard()
     {
         if (scoreText != null)
         {
-            // Custom 7-space stadium format
-            scoreText.text = $"{blueScore.Value}       {redScore.Value}";
+            // Custom 7-space stadium format (Team A on the left, Team B on the right)
+            scoreText.text = $"{teamAScore.Value}       {teamBScore.Value}";
         }
     }
 
@@ -125,6 +141,26 @@ public class HockeyScoreManager : NetworkBehaviour
         }
     }
 
+    private void ResetRoundPositions()
+    {
+        if (!IsServer) return;
+
+        ResetPuckPosition();
+        ResetAllPlayersPosition();
+    }
+
+    private void ResetAllPlayersPosition()
+    {
+        HockeyPlayerSpawn[] players = FindObjectsByType<HockeyPlayerSpawn>(FindObjectsSortMode.None);
+        foreach (HockeyPlayerSpawn player in players)
+        {
+            if (player != null)
+            {
+                player.ResetToSpawnClientRpc();
+            }
+        }
+    }
+
     private void ResetPuckPosition()
     {
         if (!IsServer || puckTransform == null || centerFaceoffPoint == null) return;
@@ -136,7 +172,7 @@ public class HockeyScoreManager : NetworkBehaviour
             puckRb.angularVelocity = Vector3.zero;
         }
 
-        // Slightly raise the spawn point (0.2f) to prevent clipping into the ice collider
+        // Slightly raise the spawn point  to prevent clipping into the ice collider
         Vector3 spawnPos = centerFaceoffPoint.position + Vector3.up * 0.2f;
         Quaternion spawnRot = centerFaceoffPoint.rotation;
 
