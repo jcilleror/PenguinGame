@@ -129,7 +129,6 @@ public class HockeyScoreManager : NetworkBehaviour
     {
         if (!IsServer || puckTransform == null || centerFaceoffPoint == null) return;
 
-        // 1. Parar en seco toda la inercia del disco
         Rigidbody puckRb = puckTransform.GetComponent<Rigidbody>();
         if (puckRb != null)
         {
@@ -137,19 +136,24 @@ public class HockeyScoreManager : NetworkBehaviour
             puckRb.angularVelocity = Vector3.zero;
         }
 
-        // Elevamos ligeramente en Y (0.15f) para evitar que se atasque en el suelo al aparecer
-        Vector3 spawnPos = centerFaceoffPoint.position + Vector3.up * 0.15f;
+        // Slightly raise the spawn point (0.2f) to prevent clipping into the ice collider
+        Vector3 spawnPos = centerFaceoffPoint.position + Vector3.up * 0.2f;
         Quaternion spawnRot = centerFaceoffPoint.rotation;
 
-        // 2. Si tiene NetworkTransform, usar Teleport() para evitar la interpolación suave y sincronizar al instante
-        Unity.Netcode.Components.NetworkTransform netTransform = puckTransform.GetComponent<Unity.Netcode.Components.NetworkTransform>();
-        if (netTransform != null)
+        if (puckTransform.TryGetComponent<Unity.Netcode.Components.NetworkTransform>(out var netTransform))
         {
             netTransform.Teleport(spawnPos, spawnRot, puckTransform.localScale);
         }
         else
         {
             puckTransform.SetPositionAndRotation(spawnPos, spawnRot);
+        }
+
+        // Ensure velocity remains zero after teleporting
+        if (puckRb != null)
+        {
+            puckRb.linearVelocity = Vector3.zero;
+            puckRb.angularVelocity = Vector3.zero;
         }
     }
 }

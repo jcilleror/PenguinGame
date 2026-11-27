@@ -1,18 +1,33 @@
 using UnityEngine;
 
-[RequireComponent(typeof(Collider))]
 public class GoalZone : MonoBehaviour
 {
     [Header("Goal Configuration")]
-    [Tooltip("Check this if scoring in this net gives a point to the Blue team")]
     public bool awardsPointToBlue = true;
     public HockeyScoreManager scoreManager;
 
+    private bool goalCooldown = false;
+
     private void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Puck") && scoreManager != null)
+        if (goalCooldown) return;
+
+        GameObject rootObj = other.attachedRigidbody != null ? other.attachedRigidbody.gameObject : other.gameObject;
+
+        if (rootObj.CompareTag("Puck") || rootObj.name.ToLower().Contains("punk") || rootObj.name.ToLower().Contains("puck"))
         {
-            scoreManager.RegisterGoal(awardsPointToBlue);
+            HockeyScoreManager manager = scoreManager != null ? scoreManager : HockeyScoreManager.Instance;
+            if (manager != null)
+            {
+                goalCooldown = true;
+                manager.RegisterGoal(awardsPointToBlue);
+                Invoke(nameof(ResetCooldown), 2.5f);
+            }
         }
+    }
+
+    private void ResetCooldown()
+    {
+        goalCooldown = false;
     }
 }
