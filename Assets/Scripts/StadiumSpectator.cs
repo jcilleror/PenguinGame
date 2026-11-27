@@ -12,7 +12,10 @@ public class StadiumSpectator : MonoBehaviour
     public float wobbleAngle = 10f;
 
     [Header("Goal Celebration Burst")]
-    public float celebrationJumpHeight = 0.6f;
+    [Tooltip("Higher jump height when a goal is scored")]
+    public float celebrationJumpHeight = 0.30f;
+    [Tooltip("Jump speed during goal celebration")]
+    public float celebrationSpeed = 8f;
     public float celebrationDuration = 2.0f;
 
     [Header("Optional Target (Track the puck)")]
@@ -53,7 +56,7 @@ public class StadiumSpectator : MonoBehaviour
 
         float time = (Time.time * cheerSpeed * individualSpeedMultiplier) + randomPhaseOffset;
 
-        // Continuous happy hop (using Abs(Sin) so they bounce off the bench)
+        // Continuous happy hop
         float yOffset = Mathf.Abs(Mathf.Sin(time)) * hopHeight;
         transform.localPosition = baseLocalPosition + Vector3.up * yOffset;
 
@@ -77,10 +80,15 @@ public class StadiumSpectator : MonoBehaviour
 
         while (elapsed < celebrationDuration)
         {
-            // Fast, high celebratory jumps with a spin
-            float jumpCycle = Mathf.Abs(Mathf.Sin(elapsed * 10f + randomPhaseOffset));
+            float time = (elapsed * celebrationSpeed * individualSpeedMultiplier) + randomPhaseOffset;
+
+            // Higher celebratory jumps without spinning
+            float jumpCycle = Mathf.Abs(Mathf.Sin(time));
             transform.localPosition = baseLocalPosition + Vector3.up * (jumpCycle * celebrationJumpHeight);
-            transform.localRotation = baseLocalRotation * Quaternion.Euler(0f, elapsed * 360f, 0f);
+
+            // Slightly more energetic side-to-side wobble
+            float zTilt = Mathf.Sin(time) * (wobbleAngle * 1.4f);
+            transform.localRotation = baseLocalRotation * Quaternion.Euler(0f, 0f, zTilt);
 
             elapsed += Time.deltaTime;
             yield return null;
