@@ -3,7 +3,8 @@ using UnityEngine;
 public class GoalZone : MonoBehaviour
 {
     [Header("Goal Configuration")]
-    public bool awardsPointToBlue = true;
+    [Tooltip("Checked = Point for Team A | Unchecked = Point for Team B")]
+    public bool awardsPointToTeamA = true;
     public HockeyScoreManager scoreManager;
 
     private bool goalCooldown = false;
@@ -20,7 +21,7 @@ public class GoalZone : MonoBehaviour
             if (manager != null)
             {
                 goalCooldown = true;
-                manager.RegisterGoal(awardsPointToBlue);
+                manager.RegisterGoal(awardsPointToTeamA);
                 Invoke(nameof(ResetCooldown), 2.5f);
             }
         }
